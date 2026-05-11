@@ -139,6 +139,10 @@ function describeLog(l: LogEntry, nameOf: (id: string) => string): string {
       return `${l.operatorName} 结算：${l.winners
         .map((w) => `${nameOf(w.playerId)} +${w.amount}`)
         .join(" · ")}`;
+    case "player:checkout":
+      return `${l.operatorName} 结算离场（${
+        l.snapshot.pnlChips >= 0 ? "+" : ""
+      }${l.snapshot.pnlChips} 筹码）`;
   }
 }
 

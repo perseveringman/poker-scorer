@@ -14,6 +14,7 @@ import { PlayerCard } from "@/components/PlayerCard";
 import { BuyInDialog } from "@/components/BuyInDialog";
 import { BetDialog } from "@/components/BetDialog";
 import { SettleDialog } from "@/components/SettleDialog";
+import { CheckoutDialog } from "@/components/CheckoutDialog";
 import { HistoryPanel } from "@/components/HistoryPanel";
 import type { Player, SettleRequest } from "@/lib/types";
 
@@ -32,6 +33,7 @@ export default function RoomPage() {
   const [buyInTarget, setBuyInTarget] = useState<Player | null>(null);
   const [betTarget, setBetTarget] = useState<Player | null>(null);
   const [showSettle, setShowSettle] = useState(false);
+  const [showCheckout, setShowCheckout] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -295,42 +297,71 @@ export default function RoomPage() {
               )}
             </div>
 
-            {/* Undo */}
-            {logs.length > 0 && (
-              <div className="flex justify-end">
-                <button
-                  onClick={() =>
-                    act(() =>
-                      apiAction({
-                        type: "undo",
-                        roomId: room.id,
-                        operatorId: identity.playerId,
-                      })
-                    )
-                  }
-                  className="text-xs text-slate-400 hover:text-white bg-slate-800 px-3 py-1 rounded-md"
-                >
-                  ↶ 撤销上一步
-                </button>
-              </div>
-            )}
+            {/* Undo：仅可撤销自己的最近一步 */}
+            {logs.length > 0 && (() => {
+              const last = logs[0];
+              const canUndo = last.operatorId === identity.playerId;
+              return (
+                <div className="flex justify-end">
+                  <button
+                    onClick={() =>
+                      act(() =>
+                        apiAction({
+                          type: "undo",
+                          roomId: room.id,
+                          operatorId: identity.playerId,
+                        })
+                      )
+                    }
+                    disabled={!canUndo}
+                    title={
+                      canUndo
+                        ? "撤销你的上一步"
+                        : `最近一步是 ${last.operatorName} 的操作，仅 TA 可撤销`
+                    }
+                    className="text-xs text-slate-400 hover:text-white disabled:text-slate-600 disabled:cursor-not-allowed bg-slate-800 disabled:bg-slate-900 px-3 py-1 rounded-md"
+                  >
+                    ↶ 撤销上一步
+                    {!canUndo && (
+                      <span className="ml-1 text-slate-600">
+                        ({last.operatorName})
+                      </span>
+                    )}
+                  </button>
+                </div>
+              );
+            })()}
 
             {/* Players grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {players.map((p) => (
-                <PlayerCard
-                  key={p.id}
-                  player={p}
-                  isHost={p.id === room.hostId}
-                  isSelf={p.id === identity.playerId}
-                  currentBet={hand?.bets[p.id] ?? 0}
-                  isAllIn={hand?.allInIds?.includes(p.id) ?? false}
-                  chipUnit={chipUnit}
-                  handInProgress={handInProgress}
-                  onBuyIn={() => setBuyInTarget(p)}
-                  onBet={() => setBetTarget(p)}
-                />
-              ))}
+              {(() => {
+                const highestBet = Math.max(
+                  0,
+                  ...Object.values(hand?.bets ?? {})
+                );
+                return players.map((p) => {
+                  const myBet = hand?.bets[p.id] ?? 0;
+                  const diff = handInProgress
+                    ? Math.max(0, highestBet - myBet)
+                    : 0;
+                  return (
+                    <PlayerCard
+                      key={p.id}
+                      player={p}
+                      isHost={p.id === room.hostId}
+                      isSelf={p.id === identity.playerId}
+                      currentBet={myBet}
+                      isAllIn={hand?.allInIds?.includes(p.id) ?? false}
+                      callDiff={diff}
+                      chipUnit={chipUnit}
+                      handInProgress={handInProgress}
+                      onBuyIn={() => setBuyInTarget(p)}
+                      onBet={() => setBetTarget(p)}
+                      onCheckout={() => setShowCheckout(true)}
+                    />
+                  );
+                });
+              })()}
             </div>
           </>
         )}
@@ -355,6 +386,7 @@ export default function RoomPage() {
         open={!!betTarget}
         target={betTarget}
         currentBet={betTarget ? hand?.bets[betTarget.id] ?? 0 : 0}
+        allBets={hand?.bets ?? {}}
         onClose={() => setBetTarget(null)}
         onSubmit={(delta) =>
           apiAction({
@@ -377,6 +409,19 @@ export default function RoomPage() {
             roomId: room.id,
             operatorId: identity.playerId,
             settle,
+          })
+        }
+      />
+      <CheckoutDialog
+        open={showCheckout}
+        me={self}
+        chipUnit={chipUnit}
+        onClose={() => setShowCheckout(false)}
+        onConfirm={() =>
+          apiAction({
+            type: "player:checkout",
+            roomId: room.id,
+            operatorId: identity.playerId,
           })
         }
       />

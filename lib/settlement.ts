@@ -15,11 +15,17 @@ export interface Settlement {
  *
  * 复杂度 O(n^2)，对于朋友局足够。
  */
+/** 获取玩家"有效盈亏"：离场者用快照，在场者用实时 */
+export function effectiveBalance(p: Player): number {
+  if (p.checkout) return p.checkout.pnlChips;
+  return p.currentChips - p.totalBoughtIn;
+}
+
 export function computeSettlements(players: Player[]): Settlement[] {
   const balances = players.map((p) => ({
     id: p.id,
     name: p.name,
-    diff: p.currentChips - p.totalBoughtIn,
+    diff: effectiveBalance(p),
   }));
 
   const creditors = balances.filter((b) => b.diff > 0).map((b) => ({ ...b }));

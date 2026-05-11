@@ -4,6 +4,7 @@ import { splitPots, distributePots } from "./sidepots";
 import type {
   ActionReq,
   BuyIn,
+  CheckoutSnapshot,
   Hand,
   LogEntry,
   Player,
@@ -123,6 +124,7 @@ export async function createRoom(params: {
     totalBoughtIn: params.initialChips,
     online: true,
     joinedAt: Date.now(),
+    checkout: null,
   };
 
   const initialLogs: LogEntry[] = [
@@ -176,8 +178,10 @@ export async function joinRoom(params: {
     if (state.room.status === "ended") {
       throw new Error("房间已结束");
     }
-    // 如果同名玩家存在（断线重连场景），直接复用
-    const existing = state.players.find((p) => p.name === params.playerName);
+    // 如果同名玩家存在且未离场（断线重连场景），直接复用
+    const existing = state.players.find(
+      (p) => p.name === params.playerName && !p.checkout
+    );
     if (existing) {
       return {
         state: {
@@ -200,6 +204,7 @@ export async function joinRoom(params: {
       totalBoughtIn: params.initialChips,
       online: true,
       joinedAt: Date.now(),
+      checkout: null,
     };
 
     const buyIn: BuyIn = {
@@ -237,9 +242,26 @@ export async function applyAction(req: ActionReq): Promise<void> {
     const opName = operatorName(state, req.operatorId);
     const ts = Date.now();
 
+    // 校验操作者必须是房间内的玩家
+    const operator = state.players.find((p) => p.id === req.operatorId);
+    if (!operator) throw new Error("你不在房间内，请重新加入");
+    // 离场后除了 undo / room:end 外不能做任何写操作
+    if (
+      operator.checkout &&
+      req.type !== "undo" &&
+      req.type !== "room:end" &&
+      req.type !== "player:leave"
+    ) {
+      throw new Error("你已结算离场，无法再操作");
+    }
+
     switch (req.type) {
       case "bank:buyIn": {
         if (req.amount <= 0) throw new Error("买入金额必须大于 0");
+        // 权限：只能给自己买入
+        if (req.playerId !== req.operatorId) {
+          throw new Error("只能给自己买入筹码");
+        }
         const target = state.players.find((p) => p.id === req.playerId);
         if (!target) throw new Error("玩家不存在");
 
@@ -312,6 +334,10 @@ export async function applyAction(req: ActionReq): Promise<void> {
       case "hand:bet": {
         if (!state.hand || state.hand.status !== "betting") {
           throw new Error("当前没有进行中的手牌");
+        }
+        // 权限：只能给自己下注
+        if (req.playerId !== req.operatorId) {
+          throw new Error("只能给自己下注");
         }
         const player = state.players.find((p) => p.id === req.playerId);
         if (!player) throw new Error("玩家不存在");
@@ -424,6 +450,14 @@ export async function applyAction(req: ActionReq): Promise<void> {
       }
 
       case "undo": {
+        // 权限：只能撤销自己发起的最近一条操作
+        const last = state.logs[0];
+        if (!last) throw new Error("没有可撤销的操作");
+        if (last.operatorId !== req.operatorId) {
+          throw new Error(
+            `最近一步是 ${last.operatorName} 的操作，只能由本人撤销`
+          );
+        }
         return { state: undoLastAction(state), result: undefined };
       }
 
@@ -438,6 +472,48 @@ export async function applyAction(req: ActionReq): Promise<void> {
           operatorId: req.operatorId,
           operatorName: opName,
           playerId: req.operatorId,
+        });
+        return { state: next, result: undefined };
+      }
+
+      case "player:checkout": {
+        const me = state.players.find((p) => p.id === req.operatorId);
+        if (!me) throw new Error("玩家不存在");
+        if (me.checkout) throw new Error("你已经结算离场");
+
+        // 如果本手正在进行且我已经下了注，必须等本手结束
+        if (
+          state.hand &&
+          state.hand.status === "betting" &&
+          (state.hand.bets[me.id] ?? 0) > 0
+        ) {
+          throw new Error(
+            "你本手已有下注，请等本手结算后再离场"
+          );
+        }
+
+        const pnlChips = me.currentChips - me.totalBoughtIn;
+        const snapshot: CheckoutSnapshot = {
+          finalChips: me.currentChips,
+          totalBoughtIn: me.totalBoughtIn,
+          pnlChips,
+          pnlMoney: pnlChips * state.room.chipUnit,
+          at: ts,
+        };
+
+        const players = state.players.map((p) =>
+          p.id === me.id
+            ? { ...p, checkout: snapshot, online: false }
+            : p
+        );
+        let next: RoomState = { ...state, players };
+        next = appendLog(next, {
+          type: "player:checkout",
+          ts,
+          operatorId: req.operatorId,
+          operatorName: opName,
+          playerId: me.id,
+          snapshot,
         });
         return { state: next, result: undefined };
       }
@@ -620,6 +696,12 @@ function undoLastAction(state: RoomState): RoomState {
         history: state.history.slice(1),
         logs: state.logs.slice(1),
       };
+    }
+    case "player:checkout": {
+      const players = state.players.map((p) =>
+        p.id === last.playerId ? { ...p, checkout: null, online: true } : p
+      );
+      return { ...state, players, logs: state.logs.slice(1) };
     }
     default:
       throw new Error(`无法撤销此类型的操作：${last.type}`);

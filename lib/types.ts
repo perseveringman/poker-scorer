@@ -20,6 +20,22 @@ export interface Player {
   totalBoughtIn: number;  // 累计从银行买入筹码（含 initialChips）
   online: boolean;
   joinedAt: number;
+  /** 已结算离场则为该快照，否则为 null */
+  checkout: CheckoutSnapshot | null;
+}
+
+/** 玩家结算离场的快照 */
+export interface CheckoutSnapshot {
+  /** 离场时手上的筹码数 */
+  finalChips: number;
+  /** 离场时累计买入 */
+  totalBoughtIn: number;
+  /** 盈亏（筹码）= finalChips - totalBoughtIn */
+  pnlChips: number;
+  /** 盈亏（金额）= pnlChips × chipUnit */
+  pnlMoney: number;
+  /** 离场时间 */
+  at: number;
 }
 
 export interface BuyIn {
@@ -73,7 +89,8 @@ export type LogEntry =
   | { type: "bank:buyIn"; ts: number; operatorId: string; operatorName: string; playerId: string; amount: number; buyInId: string }
   | { type: "hand:start"; ts: number; operatorId: string; operatorName: string; handId: string; handNumber: number }
   | { type: "hand:bet"; ts: number; operatorId: string; operatorName: string; handId: string; playerId: string; delta: number }
-  | { type: "hand:settle"; ts: number; operatorId: string; operatorName: string; handId: string; winners: Winner[] };
+  | { type: "hand:settle"; ts: number; operatorId: string; operatorName: string; handId: string; winners: Winner[] }
+  | { type: "player:checkout"; ts: number; operatorId: string; operatorName: string; playerId: string; snapshot: CheckoutSnapshot };
 
 // ============================================================
 // 房间完整状态（SSE 全量同步 / API 返回）
@@ -128,4 +145,5 @@ export type ActionReq =
   | { type: "hand:cancel"; roomId: string; operatorId: string }    // 取消未结算的手牌
   | { type: "undo"; roomId: string; operatorId: string }
   | { type: "player:leave"; roomId: string; operatorId: string }
+  | { type: "player:checkout"; roomId: string; operatorId: string }  // 结算离场（仅本人）
   | { type: "room:end"; roomId: string; operatorId: string };

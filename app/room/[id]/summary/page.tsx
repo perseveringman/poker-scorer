@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useRoomStream } from "@/hooks/useRoomStream";
-import { computeSettlements } from "@/lib/settlement";
+import { computeSettlements, effectiveBalance } from "@/lib/settlement";
 import clsx from "clsx";
 
 export default function SummaryPage() {
@@ -40,8 +40,7 @@ export default function SummaryPage() {
     players.find((p) => p.id === id)?.name ?? "未知";
 
   const sortedPlayers = [...players].sort(
-    (a, b) =>
-      b.currentChips - b.totalBoughtIn - (a.currentChips - a.totalBoughtIn)
+    (a, b) => effectiveBalance(b) - effectiveBalance(a)
   );
 
   return (
@@ -67,12 +66,17 @@ export default function SummaryPage() {
           <h2 className="text-base font-semibold text-slate-300 mb-3">盈亏榜</h2>
           <div className="space-y-2">
             {sortedPlayers.map((p, i) => {
-              const diff = p.currentChips - p.totalBoughtIn;
+              const diff = effectiveBalance(p);
               const money = diff * chipUnit;
+              const chips = p.checkout ? p.checkout.finalChips : p.currentChips;
+              const bought = p.checkout ? p.checkout.totalBoughtIn : p.totalBoughtIn;
               return (
                 <div
                   key={p.id}
-                  className="bg-slate-800 border border-slate-700 rounded-lg p-3 flex items-center justify-between"
+                  className={clsx(
+                    "bg-slate-800 border border-slate-700 rounded-lg p-3 flex items-center justify-between",
+                    p.checkout && "opacity-80"
+                  )}
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <span
@@ -90,11 +94,18 @@ export default function SummaryPage() {
                       {i + 1}
                     </span>
                     <div className="min-w-0">
-                      <div className="text-white font-semibold truncate">
-                        {p.name}
+                      <div className="flex items-center gap-2">
+                        <span className="text-white font-semibold truncate">
+                          {p.name}
+                        </span>
+                        {p.checkout && (
+                          <span className="text-[10px] bg-slate-600 text-white px-1.5 py-0.5 rounded shrink-0">
+                            已离场
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-slate-500">
-                        买入 {p.totalBoughtIn} · 剩余 {p.currentChips}
+                        买入 {bought} · {p.checkout ? "离场" : "剩余"} {chips}
                       </div>
                     </div>
                   </div>
@@ -162,7 +173,7 @@ export default function SummaryPage() {
         {/* 数据校验（零和应为 0） */}
         {(() => {
           const totalDiff = players.reduce(
-            (s, p) => s + p.currentChips - p.totalBoughtIn,
+            (s, p) => s + effectiveBalance(p),
             0
           );
           if (totalDiff !== 0) {
