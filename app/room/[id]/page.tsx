@@ -15,7 +15,7 @@ import { BuyInDialog } from "@/components/BuyInDialog";
 import { BetDialog } from "@/components/BetDialog";
 import { SettleDialog } from "@/components/SettleDialog";
 import { HistoryPanel } from "@/components/HistoryPanel";
-import type { Player, Winner } from "@/lib/types";
+import type { Player, SettleRequest } from "@/lib/types";
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
@@ -324,6 +324,7 @@ export default function RoomPage() {
                   isHost={p.id === room.hostId}
                   isSelf={p.id === identity.playerId}
                   currentBet={hand?.bets[p.id] ?? 0}
+                  isAllIn={hand?.allInIds?.includes(p.id) ?? false}
                   chipUnit={chipUnit}
                   handInProgress={handInProgress}
                   onBuyIn={() => setBuyInTarget(p)}
@@ -370,12 +371,12 @@ export default function RoomPage() {
         hand={hand}
         players={players}
         onClose={() => setShowSettle(false)}
-        onSubmit={(winners: Winner[]) =>
+        onSubmit={(settle: SettleRequest) =>
           apiAction({
             type: "hand:settle",
             roomId: room.id,
             operatorId: identity.playerId,
-            winners,
+            settle,
           })
         }
       />

@@ -370,17 +370,13 @@ export async function applyAction(req: ActionReq): Promise<void> {
         if (!state.hand || state.hand.status !== "betting") {
           throw new Error("当前没有进行中的手牌");
         }
-        const pot = state.hand.potTotal;
-        const winTotal = req.winners.reduce((s, w) => s + w.amount, 0);
-        if (winTotal !== pot) {
-          throw new Error(`赢家分配总和 ${winTotal} 必须等于底池 ${pot}`);
-        }
-        if (req.winners.some((w) => w.amount <= 0)) {
-          throw new Error("每个赢家的金额必须大于 0");
-        }
+        const { winners, potBreakdown } = resolveSettlement(state.hand, req.settle);
+
         // 将筹码发给赢家
         const winMap = new Map<string, number>();
-        req.winners.forEach((w) => winMap.set(w.playerId, (winMap.get(w.playerId) ?? 0) + w.amount));
+        winners.forEach((w) =>
+          winMap.set(w.playerId, (winMap.get(w.playerId) ?? 0) + w.amount)
+        );
         const players = state.players.map((p) => {
           const win = winMap.get(p.id);
           return win ? { ...p, currentChips: p.currentChips + win } : p;
@@ -388,7 +384,8 @@ export async function applyAction(req: ActionReq): Promise<void> {
         const settledHand: Hand = {
           ...state.hand,
           status: "settled",
-          winners: req.winners,
+          winners,
+          potBreakdown,
           settledAt: ts,
         };
         const history = [settledHand, ...state.history].slice(0, 50);
@@ -404,7 +401,7 @@ export async function applyAction(req: ActionReq): Promise<void> {
           operatorId: req.operatorId,
           operatorName: opName,
           handId: settledHand.id,
-          winners: req.winners,
+          winners,
         });
         return { state: next, result: undefined };
       }
@@ -457,6 +454,76 @@ export async function applyAction(req: ActionReq): Promise<void> {
 }
 
 // ============================================================
+// 结算解析：把 SettleRequest 转成最终 winners + 池明细
+// ============================================================
+function resolveSettlement(
+  hand: Hand,
+  settle: SettleRequest
+): { winners: Winner[]; potBreakdown?: SettledPot[] } {
+  const pot = hand.potTotal;
+
+  if (settle.mode === "simple") {
+    const winTotal = settle.winners.reduce((s, w) => s + w.amount, 0);
+    if (winTotal !== pot) {
+      throw new Error(`赢家分配总和 ${winTotal} 必须等于底池 ${pot}`);
+    }
+    if (settle.winners.some((w) => w.amount <= 0)) {
+      throw new Error("每个赢家的金额必须大于 0");
+    }
+    return { winners: settle.winners };
+  }
+
+  // pots 模式：用 splitPots 拆池 + distributePots 分钱
+  const pots = splitPots({
+    bets: hand.bets,
+    eligibleIds: Object.keys(hand.bets),   // 本版本假设所有下注者都没弃牌
+  });
+
+  // 校验每池赢家都属于 eligibleIds
+  settle.pots.forEach((sel) => {
+    const pot = pots[sel.potIndex];
+    if (!pot) throw new Error(`池索引 ${sel.potIndex} 不存在`);
+    if (sel.winnerIds.length === 0) {
+      throw new Error(`${pot.label}未选择赢家`);
+    }
+    const invalid = sel.winnerIds.filter(
+      (id) => !pot.eligibleIds.includes(id)
+    );
+    if (invalid.length > 0) {
+      throw new Error(`${pot.label}的赢家必须在参与者中`);
+    }
+  });
+
+  // 每个池都必须有赢家（不允许漏选）
+  if (settle.pots.length !== pots.length) {
+    throw new Error("请为每个池子选择赢家");
+  }
+
+  const result = distributePots(pots, settle.pots);
+
+  // 合并同一玩家跨多池的获胜额
+  const winners: Winner[] = Object.entries(result.distribution).map(
+    ([playerId, amount]) => ({ playerId, amount })
+  );
+
+  const potBreakdown: SettledPot[] = pots.map((p, i) => ({
+    label: p.label,
+    amount: p.amount,
+    eligibleIds: p.eligibleIds,
+    winners: result.potResults[i]?.winners ?? [],
+  }));
+
+  // 数据校验：分出去的钱等于底池
+  if (result.totalDistributed !== pot) {
+    throw new Error(
+      `内部错误：分配总和 ${result.totalDistributed} ≠ 底池 ${pot}`
+    );
+  }
+
+  return { winners, potBreakdown };
+}
+
+// ============================================================
 // Undo：反向执行最近一条日志
 // ============================================================
 function undoLastAction(state: RoomState): RoomState {
@@ -497,7 +564,24 @@ function undoLastAction(state: RoomState): RoomState {
         p.id === last.playerId ? { ...p, currentChips: p.currentChips + last.delta } : p
       );
       const potTotal = Object.values(bets).reduce((s, v) => s + v, 0);
-      const hand: Hand = { ...state.hand, bets, potTotal };
+
+      // 撤销后这位玩家筹码恢复，若之前是 all-in 则移除；若其他人因其他原因仍为 0 也重新核对
+      const allInSet = new Set(state.hand.allInIds);
+      const updated = players.find((p) => p.id === last.playerId);
+      if (updated) {
+        if (updated.currentChips === 0 && (bets[last.playerId] ?? 0) > 0) {
+          allInSet.add(last.playerId);
+        } else {
+          allInSet.delete(last.playerId);
+        }
+      }
+
+      const hand: Hand = {
+        ...state.hand,
+        bets,
+        potTotal,
+        allInIds: Array.from(allInSet),
+      };
       return { ...state, players, hand, logs: state.logs.slice(1) };
     }
     case "hand:start": {

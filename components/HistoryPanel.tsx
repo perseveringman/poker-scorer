@@ -28,6 +28,11 @@ export function HistoryPanel({ history, buyIns, logs, players }: Props) {
               <div className="flex justify-between items-center mb-2">
                 <span className="text-white font-semibold">
                   第 {h.handNumber} 手
+                  {h.potBreakdown && h.potBreakdown.length > 1 && (
+                    <span className="ml-2 text-[10px] bg-rose-700 text-white px-1.5 py-0.5 rounded">
+                      ALL-IN
+                    </span>
+                  )}
                 </span>
                 <span className="text-amber-400 font-mono">
                   底池 {h.potTotal}
@@ -40,12 +45,25 @@ export function HistoryPanel({ history, buyIns, logs, players }: Props) {
                     .map(([pid, v]) => `${nameOf(pid)} ${v}`)
                     .join(" · ") || "无"}
                 </div>
-                <div className="text-emerald-400">
-                  赢家：
-                  {h.winners
-                    .map((w) => `${nameOf(w.playerId)} +${w.amount}`)
-                    .join(" · ") || "无"}
-                </div>
+                {h.potBreakdown && h.potBreakdown.length > 1 ? (
+                  <div className="space-y-0.5 mt-1">
+                    {h.potBreakdown.map((p, i) => (
+                      <div key={i} className="text-emerald-400">
+                        {p.label}（{p.amount}）→{" "}
+                        {p.winners
+                          .map((w) => `${nameOf(w.playerId)} +${w.amount}`)
+                          .join(" · ") || "无"}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-emerald-400">
+                    赢家：
+                    {h.winners
+                      .map((w) => `${nameOf(w.playerId)} +${w.amount}`)
+                      .join(" · ") || "无"}
+                  </div>
+                )}
               </div>
             </div>
           ))}

@@ -8,6 +8,7 @@ interface Props {
   isHost: boolean;
   isSelf: boolean;
   currentBet: number;           // 本轮已下注
+  isAllIn: boolean;             // 本手是否已 all-in
   chipUnit: number;
   handInProgress: boolean;
   onBuyIn: () => void;
@@ -19,6 +20,7 @@ export function PlayerCard({
   isHost,
   isSelf,
   currentBet,
+  isAllIn,
   chipUnit,
   handInProgress,
   onBuyIn,
@@ -55,6 +57,11 @@ export function PlayerCard({
           {isHost && (
             <span className="text-[10px] bg-amber-600 text-white px-1.5 py-0.5 rounded">
               房主
+            </span>
+          )}
+          {isAllIn && (
+            <span className="text-[10px] bg-rose-600 text-white px-1.5 py-0.5 rounded font-semibold animate-pulse">
+              ALL-IN
             </span>
           )}
         </div>
@@ -99,9 +106,10 @@ export function PlayerCard({
         {handInProgress && (
           <button
             onClick={onBet}
-            className="flex-1 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-md transition"
+            disabled={isAllIn}
+            className="flex-1 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-md transition"
           >
-            下注
+            {isAllIn ? "已 All-in" : "下注"}
           </button>
         )}
       </div>
